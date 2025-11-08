@@ -158,6 +158,11 @@ class BaseModelArguments:
         default=False,
         metadata={"help": "Whether or not to upcast the output of lm_head in fp32."},
     )
+    # jz1108
+    replace_lm_head: bool = field(
+        default=False,
+        metadata={"help": "Whether or not to replace lm_head with AcceptHead (a 2-layer MLP)."},
+    )
     train_from_scratch: bool = field(
         default=False,
         metadata={"help": "Whether or not to randomly initialize the model weights."},

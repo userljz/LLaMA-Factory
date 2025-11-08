@@ -24,6 +24,7 @@ from transformers.modeling_utils import is_fsdp_enabled
 from ..extras import logging
 from ..extras.misc import infer_optim_dtype
 from ..extras.packages import is_transformers_version_greater_than
+from .model_utils.accept_head import AcceptHead  # jz1108
 from .model_utils.attention import configure_attn_implementation, print_attn_implementation
 from .model_utils.checkpointing import prepare_model_for_training
 from .model_utils.embedding import resize_embedding_layer
@@ -46,6 +47,69 @@ if TYPE_CHECKING:
 
 logger = logging.get_logger(__name__)
 
+
+# jz1108
+def _replace_lm_head_with_accept_head(model: "PreTrainedModel") -> None:
+    r"""Replace the lm_head with AcceptHead (a 2-layer MLP)."""
+    # Get hidden size from model config
+    hidden_size = getattr(model.config, "hidden_size", None)
+    if hidden_size is None:
+        # Try alternative attribute names
+        hidden_size = getattr(model.config, "d_model", None) or getattr(model.config, "n_embd", None)
+    
+    if hidden_size is None:
+        raise ValueError("Cannot determine hidden_size from model config. Please check the model architecture.")
+    
+    # Create AcceptHead
+    accept_head = AcceptHead(hidden_size=hidden_size)
+    
+    # Get the device and dtype from the original lm_head
+    original_lm_head = None
+    device = None
+    dtype = None
+    
+    # Try to find lm_head in different possible locations
+    if hasattr(model, "lm_head"):
+        original_lm_head = model.lm_head
+        device = next(original_lm_head.parameters()).device
+        dtype = next(original_lm_head.parameters()).dtype
+        model.lm_head = accept_head.to(device=device, dtype=dtype)
+        logger.info_rank0(f"Replaced lm_head with AcceptHead (hidden_size={hidden_size}).")
+    elif hasattr(model, "model") and hasattr(model.model, "lm_head"):
+        original_lm_head = model.model.lm_head
+        device = next(original_lm_head.parameters()).device
+        dtype = next(original_lm_head.parameters()).dtype
+        model.model.lm_head = accept_head.to(device=device, dtype=dtype)
+        logger.info_rank0(f"Replaced model.lm_head with AcceptHead (hidden_size={hidden_size}).")
+    elif hasattr(model, "output") and hasattr(model.output, "lm_head"):
+        original_lm_head = model.output.lm_head
+        device = next(original_lm_head.parameters()).device
+        dtype = next(original_lm_head.parameters()).dtype
+        model.output.lm_head = accept_head.to(device=device, dtype=dtype)
+        logger.info_rank0(f"Replaced output.lm_head with AcceptHead (hidden_size={hidden_size}).")
+    else:
+        # Try to find any output layer
+        for name, module in model.named_modules():
+            if "lm_head" in name.lower() or "output" in name.lower():
+                if hasattr(module, "weight"):
+                    device = next(module.parameters()).device
+                    dtype = next(module.parameters()).dtype
+                    # Replace the module
+                    parent_name = ".".join(name.split(".")[:-1])
+                    child_name = name.split(".")[-1]
+                    if parent_name:
+                        parent_module = model.get_submodule(parent_name)
+                        setattr(parent_module, child_name, accept_head.to(device=device, dtype=dtype))
+                    else:
+                        setattr(model, child_name, accept_head.to(device=device, dtype=dtype))
+                    logger.info_rank0(f"Replaced {name} with AcceptHead (hidden_size={hidden_size}).")
+                    return
+        
+        raise ValueError(
+            "Cannot find lm_head in the model. "
+            "Please check if the model has lm_head, output_layer, or output attribute."
+        )
+    
 
 def patch_tokenizer(tokenizer: "PreTrainedTokenizer", model_args: "ModelArguments") -> None:
     if "PreTrainedTokenizerBase" not in str(tokenizer._pad.__func__):
@@ -181,6 +245,10 @@ def patch_model(
             new_special_tokens_config=getattr(model_args, "_special_token_descriptions", None),
             init_special_tokens=model_args.init_special_tokens,
         )
+
+    # jz1108
+    if model_args.replace_lm_head:
+        _replace_lm_head_with_accept_head(model)
 
     if is_trainable:
         if getattr(model.config, "model_type", None) == "gemma3n":
