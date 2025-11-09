@@ -137,6 +137,17 @@ class DataArguments:
         default=False,
         metadata={"help": "Whether or not to use a shared file system for the datasets."},
     )
+    # jz1108
+    use_accept_head_format: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "Whether or not to use AcceptHead dataset format. "
+                "Format: [context]+[<sep>]+[draft tokens]+[<sep>]+[target tokens], "
+                "with regression scores for draft tokens."
+            )
+        },
+    )
 
     def __post_init__(self):
         def split_arg(arg):

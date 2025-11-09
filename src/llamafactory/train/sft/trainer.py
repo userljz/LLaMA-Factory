@@ -28,6 +28,7 @@ from typing_extensions import override
 from ...extras import logging
 from ...extras.constants import IGNORE_INDEX
 from ...extras.packages import is_transformers_version_greater_than
+from ..accept_head_loss import compute_accept_head_loss  # jz1108
 from ..callbacks import SaveProcessorCallback
 from ..fp8_utils import configure_fp8_environment, verify_fp8_status
 from ..trainer_utils import create_custom_optimizer, create_custom_scheduler
@@ -121,6 +122,9 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
 
     @override
     def compute_loss(self, model, inputs, *args, **kwargs):
+        # Use custom loss function if set (e.g., AcceptHead loss)
+        if hasattr(self, "compute_loss_func"):
+            return self.compute_loss_func(model, inputs, return_outputs=False)
         return super().compute_loss(model, inputs, *args, **kwargs)
 
     @override
