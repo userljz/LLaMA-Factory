@@ -32,6 +32,7 @@ from .processor import (
     SupervisedDatasetProcessor,
     UnsupervisedDatasetProcessor,
 )
+from .processor.accept_head import AcceptHeadDatasetProcessor  # jz1108
 
 
 if TYPE_CHECKING:
@@ -195,7 +196,10 @@ def _get_dataset_processor(
     do_generate: bool = False,
 ) -> "DatasetProcessor":
     r"""Return the corresponding dataset processor."""
-    if stage == "pt":
+    # jz1108: Check for AcceptHead format first
+    if data_args.use_accept_head_format and stage == "sft" and not do_generate:
+        dataset_processor_class = AcceptHeadDatasetProcessor
+    elif stage == "pt":
         dataset_processor_class = PretrainDatasetProcessor
     elif stage == "sft" and not do_generate:
         if data_args.packing:
