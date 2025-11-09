@@ -1,3 +1,4 @@
+
 ### model
 model_name_or_path: meta-llama/Llama-3.1-8B-Instruct
 trust_remote_code: true
@@ -14,27 +15,28 @@ additional_target: lm_head  # 使 AcceptHead 可训练（直接训练 AcceptHead
 ### dataset
 dataset: accept_head
 template: llama3
-cutoff_len: 2048
-max_samples: 1000
+cutoff_len: 4096
+max_samples: null
 overwrite_cache: true
 preprocessing_num_workers: 16
 dataloader_num_workers: 4
 use_accept_head_format: true  # Enable AcceptHead dataset format
 
 ### output
-output_dir: saves/llama3.1-8b/lora/sft-accept-head
+output_dir: saves/llama3.1-8b/sft/default
 logging_steps: 10
 save_steps: 500
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: false
-report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
+report_to: wandb  # choices: [none, wandb, tensorboard, swanlab, mlflow]
+run_name: default
 
 ### train
 per_device_train_batch_size: 32
 gradient_accumulation_steps: 1
 learning_rate: 1.0e-4
-num_train_epochs: 20.0
+num_train_epochs: 10.0
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
 bf16: true
@@ -42,9 +44,8 @@ ddp_timeout: 180000000
 resume_from_checkpoint: null
 
 ### eval
-# eval_dataset: alpaca_en_demo
-# val_size: 0.1
-# per_device_eval_batch_size: 1
-# eval_strategy: steps
-# eval_steps: 500
+# val_size: 0.05  # 分出5%的数据作为验证集
+# per_device_eval_batch_size: 16
+# eval_strategy: steps  # 按步数进行评估
+# eval_steps: 100
 

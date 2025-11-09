@@ -1,6 +1,6 @@
 export HF_HOME='/wekafs/jinzeli2/cache'
 export HF_HUB_OFFLINE='1'
-export HIP_VISIBLE_DEVICES='0'
+export HIP_VISIBLE_DEVICES='2'
 export WANDB_PROJECT="251109_llama_factory"
 export WANDB_API_KEY="88b970302b89c7b55c90532cfd69ce4ee64ba81a"
 
@@ -10,7 +10,7 @@ CONFIG_FILE="examples/train_lora/251109_llama3_1_8b_sft_wandb.yaml"
 
 
 # 要测试的 batch size 列表
-BATCH_SIZES=(32)
+BATCH_SIZES=(64)
 lora_rank=(8)
 
 # 循环运行实验
