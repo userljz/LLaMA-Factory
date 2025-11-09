@@ -367,10 +367,47 @@ class OpenAIDatasetConverter(DatasetConverter):
         return output
 
 
+# jz1108
+@dataclass
+class AcceptHeadDatasetConverter(DatasetConverter):
+    r"""Converter for AcceptHead dataset format.
+    
+    Expected format:
+    - train.jsonl: Contains training samples with req_id, draft_ids, verifier_ids, etc.
+    - context.jsonl: Contains context data with req_id, user_text, assistant_text
+    """
+    
+    def __call__(self, example: dict[str, Any]) -> dict[str, Any]:
+        r"""Convert a single example to the standard format.
+        
+        Expected fields in example:
+        - req_id: Request ID
+        - context_len: Context length
+        - spd_round_draft_ids: Draft token IDs
+        - spd_round_verifier_ids: Verifier token IDs
+        - mismatch_index: Mismatch positions
+        - mismatch_score: Mismatch scores (0-10)
+        - user_text: User text (from context, if merged)
+        - assistant_text: Assistant text (from context, if merged)
+        """
+        output = {
+            "req_id": str(example.get("req_id", "")),
+            "context_len": int(example.get("context_len", 0)),
+            "spd_round_draft_ids": example.get("spd_round_draft_ids", []),
+            "spd_round_verifier_ids": example.get("spd_round_verifier_ids", []),
+            "mismatch_index": example.get("mismatch_index", []),
+            "mismatch_score": example.get("mismatch_score", []),
+            "user_text": example.get("user_text"),
+            "assistant_text": example.get("assistant_text"),
+        }
+        return output
+
+
 DATASET_CONVERTERS = {
     "alpaca": AlpacaDatasetConverter,
     "sharegpt": SharegptDatasetConverter,
     "openai": OpenAIDatasetConverter,
+    "accept_head": AcceptHeadDatasetConverter,
 }
 
 
@@ -407,6 +444,11 @@ def align_dataset(
     _videos: []
     _audios: []
     """
+    # jz1108
+    # Special handling for AcceptHead format: merge context.jsonl
+    if dataset_attr.formatting == "accept_head" and dataset_attr.load_from == "file":
+        dataset = _merge_accept_head_context(dataset, dataset_attr, data_args, training_args)
+    
     column_names = list(next(iter(dataset)).keys())
     kwargs = {}
     if not data_args.streaming:
@@ -423,3 +465,68 @@ def align_dataset(
         remove_columns=column_names,
         **kwargs,
     )
+
+# jz1108
+def _merge_accept_head_context(
+    dataset: Union["Dataset", "IterableDataset"],
+    dataset_attr: "DatasetAttr",
+    data_args: "DataArguments",
+    training_args: "Seq2SeqTrainingArguments",
+) -> Union["Dataset", "IterableDataset"]:
+    r"""Merge context.jsonl with train.jsonl for AcceptHead format.
+    
+    Loads context.jsonl and merges it with train.jsonl based on req_id.
+    """
+    # Find context.jsonl file
+    dataset_path = os.path.join(data_args.dataset_dir, dataset_attr.dataset_name)
+    if os.path.isdir(dataset_path):
+        # Look for context.jsonl in the same directory
+        context_file = os.path.join(dataset_path, "context.jsonl")
+    elif os.path.isfile(dataset_path):
+        # Look for context.jsonl in the same directory as train.jsonl
+        dataset_dir = os.path.dirname(dataset_path)
+        context_file = os.path.join(dataset_dir, "context.jsonl")
+    else:
+        logger.warning_rank0(f"Cannot find dataset path: {dataset_path}, skipping context merge.")
+        return dataset
+    
+    # Load context.jsonl
+    context_map = {}
+    if os.path.isfile(context_file):
+        try:
+            with open(context_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        ctx_data = json.loads(line)
+                        req_id = str(ctx_data.get("req_id", ""))
+                        if req_id:
+                            context_map[req_id] = {
+                                "user_text": ctx_data.get("user_text", ""),
+                                "assistant_text": ctx_data.get("assistant_text", ""),
+                            }
+            logger.info_rank0(f"Loaded {len(context_map)} context entries from {context_file}.")
+        except Exception as e:
+            logger.warning_rank0(f"Error loading context.jsonl: {e}, continuing without context merge.")
+    else:
+        logger.warning_rank0(f"Context file not found: {context_file}, continuing without context merge.")
+    
+    # Merge context data into dataset
+    if context_map:
+        def merge_context(example):
+            req_id = str(example.get("req_id", ""))
+            if req_id in context_map:
+                example["user_text"] = context_map[req_id]["user_text"]
+                example["assistant_text"] = context_map[req_id]["assistant_text"]
+            return example
+        
+        kwargs = {}
+        if not data_args.streaming:
+            kwargs = dict(
+                num_proc=data_args.preprocessing_num_workers,
+                load_from_cache_file=(not data_args.overwrite_cache) or (training_args.local_process_index != 0),
+                desc="Merging context data",
+            )
+        
+        dataset = dataset.map(merge_context, batched=False, **kwargs)
+    
+    return dataset

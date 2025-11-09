@@ -88,6 +88,13 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
 
             self.compute_loss_func = dft_loss_func
 
+        # jz1108
+        # Use AcceptHead loss if replace_lm_head is enabled
+        if model_args is not None and model_args.replace_lm_head:
+            self.compute_loss_func = compute_accept_head_loss
+            logger.info_rank0("Using AcceptHead regression loss (BCEWithLogitsLoss).")
+
+
         # Verify FP8 status after trainer initialization (accelerator should be available)
         if model_args is not None and model_args.fp8 and hasattr(self, "accelerator"):
             verify_fp8_status(self.accelerator, model_args)
