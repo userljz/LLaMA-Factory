@@ -2,6 +2,10 @@
   "identity": {
     "file_name": "identity.json"
   },
+  "accept_head": {
+    "file_name": "accept_head_train.jsonl",
+    "formatting": "accept_head"
+  },
   "alpaca_en_demo": {
     "file_name": "alpaca_en_demo.json"
   },

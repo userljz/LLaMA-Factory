@@ -1,5 +1,5 @@
 ### model
-model_name_or_path: meta-llama/Meta-Llama-3.1-8B-Instruct
+model_name_or_path: meta-llama/Llama-3.1-8B-Instruct
 trust_remote_code: true
 replace_lm_head: true  # Replace lm_head with AcceptHead (2-layer MLP)
 
@@ -12,7 +12,7 @@ lora_target: all
 additional_target: lm_head  # 使 AcceptHead 可训练（直接训练 AcceptHead 的所有参数，而不是添加 LoRA 适配器）
 
 ### dataset
-dataset: accept_head_demo
+dataset: accept_head
 template: llama3
 cutoff_len: 2048
 max_samples: 1000
