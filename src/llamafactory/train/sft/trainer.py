@@ -124,7 +124,9 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
     def compute_loss(self, model, inputs, *args, **kwargs):
         # Use custom loss function if set (e.g., AcceptHead loss)
         if hasattr(self, "compute_loss_func"):
-            return self.compute_loss_func(model, inputs, return_outputs=False)
+            # Check if return_outputs is requested (needed for prediction_step in evaluation)
+            return_outputs = kwargs.get("return_outputs", False)
+            return self.compute_loss_func(model, inputs, return_outputs=return_outputs)
         return super().compute_loss(model, inputs, *args, **kwargs)
 
     @override

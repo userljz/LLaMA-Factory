@@ -317,17 +317,24 @@ if model_args is not None and model_args.replace_lm_head:
     logger.info_rank0("Using AcceptHead regression loss (BCEWithLogitsLoss).")
 ```
 
-**修改3：使用自定义损失函数**（第122-126行）
+**修改3：使用自定义损失函数**（第123-130行）
 ```python
 @override
 def compute_loss(self, model, inputs, *args, **kwargs):
     # Use custom loss function if set (e.g., AcceptHead loss)
     if hasattr(self, "compute_loss_func"):
-        return self.compute_loss_func(model, inputs, return_outputs=False)
+        # Check if return_outputs is requested (needed for prediction_step in evaluation)
+        return_outputs = kwargs.get("return_outputs", False)
+        return self.compute_loss_func(model, inputs, return_outputs=return_outputs)
     return super().compute_loss(model, inputs, *args, **kwargs)
 ```
 
 **目的**：当 `replace_lm_head=True` 时，使用自定义的 AcceptHead 损失函数
+
+**重要修复**（2025-01）：
+- 修复了评估阶段的 `TypeError: iteration over a 0-d tensor` 错误
+- 原因：评估时 `prediction_step` 需要 `compute_loss` 返回 `(loss, outputs)` 元组，但之前总是传递 `return_outputs=False`
+- 解决方案：检查 `kwargs` 中的 `return_outputs` 参数，在需要时正确传递，确保评估阶段能正常返回元组
 
 ---
 
@@ -355,7 +362,7 @@ def compute_loss(self, model, inputs, *args, **kwargs):
 | 文件 | 修改类型 | 主要内容 |
 |------|---------|---------|
 | `src/llamafactory/train/accept_head_loss.py` | 新建 | `compute_accept_head_loss()` |
-| `src/llamafactory/train/sft/trainer.py` | 添加逻辑 | 使用自定义损失函数 |
+| `src/llamafactory/train/sft/trainer.py` | 添加逻辑 + 修复 | 使用自定义损失函数，修复评估阶段 return_outputs 问题 |
 
 ---
 
@@ -545,7 +552,7 @@ def compute_accept_head_loss(model, inputs, return_outputs=False):
 
 ---
 
-#### 文件9：`src/llamafactory/train/sft/trainer.py`（3处修改）
+#### 文件9：`src/llamafactory/train/sft/trainer.py`（3处修改 + 1处修复）
 
 **修改1**：第31行（导入）
 ```python
@@ -559,13 +566,22 @@ if model_args is not None and model_args.replace_lm_head:
     logger.info_rank0("Using AcceptHead regression loss (BCEWithLogitsLoss).")
 ```
 
-**修改3**：第122-126行（使用损失函数）
+**修改3**：第123-130行（使用损失函数，已修复）
 ```python
+@override
 def compute_loss(self, model, inputs, *args, **kwargs):
+    # Use custom loss function if set (e.g., AcceptHead loss)
     if hasattr(self, "compute_loss_func"):
-        return self.compute_loss_func(model, inputs, return_outputs=False)
+        # Check if return_outputs is requested (needed for prediction_step in evaluation)
+        return_outputs = kwargs.get("return_outputs", False)
+        return self.compute_loss_func(model, inputs, return_outputs=return_outputs)
     return super().compute_loss(model, inputs, *args, **kwargs)
 ```
+
+**修复说明**（2025-01）：
+- **问题**：评估阶段出现 `TypeError: iteration over a 0-d tensor` 错误
+- **原因**：`prediction_step` 在评估时会调用 `compute_loss(model, inputs, return_outputs=True)`，期望返回 `(loss, outputs)` 元组，但之前的实现总是传递 `return_outputs=False`，导致只返回标量 `loss`
+- **解决方案**：检查 `kwargs` 中的 `return_outputs` 参数，在评估阶段正确传递 `return_outputs=True`，确保返回 `(loss, outputs)` 元组
 
 ---
 
@@ -786,9 +802,9 @@ labels = [IGNORE_INDEX, IGNORE_INDEX, ..., IGNORE_INDEX, IGNORE_INDEX, 0.4, IGNO
 | 6 | `src/llamafactory/data/converter.py` | 添加类和函数 | ~165 | 数据转换和 context 合并 |
 | 7 | `src/llamafactory/data/processor/accept_head.py` | 完全重写 | 245 | AcceptHead 数据预处理 |
 | 8 | `src/llamafactory/train/accept_head_loss.py` | 新建 | 94 | 自定义损失函数 |
-| 9 | `src/llamafactory/train/sft/trainer.py` | 添加逻辑 | ~10 | 使用自定义损失函数 |
+| 9 | `src/llamafactory/train/sft/trainer.py` | 添加逻辑 + 修复 | ~12 | 使用自定义损失函数，修复评估阶段 return_outputs 问题 |
 
-**总计**：9个文件，~600行代码
+**总计**：9个文件，~602行代码
 
 ---
 
@@ -843,6 +859,9 @@ labels = [IGNORE_INDEX, IGNORE_INDEX, ..., IGNORE_INDEX, IGNORE_INDEX, 0.4, IGNO
 
 ### Q5: AcceptHead 不可训练？
 **A**: 在 YAML 中添加 `additional_target: lm_head`。
+
+### Q6: 评估阶段出现 `TypeError: iteration over a 0-d tensor` 错误？
+**A**: 此问题已在 2025-01 修复。如果仍遇到此错误，请确保使用最新版本的代码。修复内容：`compute_loss` 方法现在会检查 `kwargs` 中的 `return_outputs` 参数，在评估阶段正确返回 `(loss, outputs)` 元组。
 
 ---
 
@@ -1047,16 +1066,16 @@ Configuration file saved to saves/llama3.1-8b/lora/sft-accept-head/llama3_1_8b_l
 | 6 | `src/llamafactory/data/converter.py` | 添加类和函数 | ~165 | 数据转换和 context 合并 |
 | 7 | `src/llamafactory/data/processor/accept_head.py` | 完全重写 | 245 | AcceptHead 数据预处理 |
 | 8 | `src/llamafactory/train/accept_head_loss.py` | 新建 | 94 | 自定义损失函数 |
-| 9 | `src/llamafactory/train/sft/trainer.py` | 添加逻辑 | ~10 | 使用自定义损失函数 |
+| 9 | `src/llamafactory/train/sft/trainer.py` | 添加逻辑 + 修复 | ~12 | 使用自定义损失函数，修复评估阶段 return_outputs 问题 |
 | 10 | `src/llamafactory/hparams/parser.py` | 修改函数 | ~10 | 记录配置文件路径 |
 | 11 | `src/llamafactory/train/callbacks.py` | 添加类 | ~35 | 保存配置文件到 checkpoint |
 | 12 | `src/llamafactory/train/tuner.py` | 注册 callback | 2 | 注册 SaveConfigCallback |
 
-**总计**：12个文件，~650行代码
+**总计**：12个文件，~652行代码
 
 ---
 
-**文档版本**：v1.1
-**最后更新**：2025-01
+**文档版本**：v1.2
+**最后更新**：2025-01（修复评估阶段 return_outputs 问题）
 **维护者**：LLaMA-Factory Team
 
