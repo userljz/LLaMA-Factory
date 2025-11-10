@@ -24,7 +24,7 @@ from ...extras.misc import calculate_tps
 from ...extras.ploting import plot_loss
 from ...model import load_model, load_tokenizer
 from ..trainer_utils import create_modelcard_and_push
-from .metric import ComputeAccuracy, ComputeSimilarity, eval_logit_processor
+from .metric import ComputeAccuracy, ComputeAcceptHeadAccuracy, ComputeSimilarity, accept_head_logit_processor, eval_logit_processor
 from .trainer import CustomSeq2SeqTrainer
 
 
@@ -70,8 +70,13 @@ def run_sft(
     if training_args.predict_with_generate:
         metric_module["compute_metrics"] = ComputeSimilarity(tokenizer=tokenizer)
     elif finetuning_args.compute_accuracy:
-        metric_module["compute_metrics"] = ComputeAccuracy()
-        metric_module["preprocess_logits_for_metrics"] = eval_logit_processor
+        # Use AcceptHead accuracy if replace_lm_head is enabled
+        if model_args.replace_lm_head:
+            metric_module["compute_metrics"] = ComputeAcceptHeadAccuracy(tolerance=finetuning_args.accept_head_accuracy_tolerance)
+            metric_module["preprocess_logits_for_metrics"] = accept_head_logit_processor
+        else:
+            metric_module["compute_metrics"] = ComputeAccuracy()
+            metric_module["preprocess_logits_for_metrics"] = eval_logit_processor
 
     # Keyword arguments for `model.generate`
     gen_kwargs = generating_args.to_dict(obey_generation_config=True)

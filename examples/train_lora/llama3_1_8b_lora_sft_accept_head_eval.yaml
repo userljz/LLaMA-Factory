@@ -1,0 +1,31 @@
+### model
+model_name_or_path: meta-llama/Llama-3.1-8B-Instruct
+adapter_name_or_path: wekafs/jinzeli2/LLaMA-Factory/saves/llama3.1-8b/sft/llama31_8b_sft_bs32_rank8/checkpoint-500
+trust_remote_code: true
+replace_lm_head: true  # Replace lm_head with AcceptHead (2-layer MLP)
+
+### method
+stage: sft
+do_train: false  # 不训练，只评估
+do_eval: true  # 启用评估
+finetuning_type: lora
+
+### dataset
+dataset: accept_head
+template: llama3
+cutoff_len: 2048
+# max_samples: 1000  # 可以设置最大样本数，或者注释掉使用全部数据
+overwrite_cache: false
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+use_accept_head_format: true  # Enable AcceptHead dataset format
+
+### output
+output_dir: saves/llama3.1-8b/lora/eval-checkpoint-500
+logging_steps: 10
+report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
+
+### eval
+per_device_eval_batch_size: 1
+compute_accuracy: false  # AcceptHead回归任务，默认accuracy不适用
+

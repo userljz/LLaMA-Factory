@@ -506,6 +506,10 @@ class FinetuningArguments(
         default=False,
         metadata={"help": "Whether or not to compute the token-level accuracy at evaluation."},
     )
+    accept_head_accuracy_tolerance: float = field(
+        default=0.1,
+        metadata={"help": "Tolerance threshold for AcceptHead accuracy computation (e.g., 0.1 means 10% relative error)."},
+    )
     disable_shuffling: bool = field(
         default=False,
         metadata={"help": "Whether or not to disable the shuffling of the training set."},

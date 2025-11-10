@@ -58,6 +58,27 @@ def eval_logit_processor(logits: "torch.Tensor", labels: "torch.Tensor") -> "tor
     return torch.argmax(logits, dim=-1)
 
 
+def accept_head_logit_processor(logits: "torch.Tensor", labels: "torch.Tensor") -> "torch.Tensor":
+    r"""Convert AcceptHead logits to probabilities using sigmoid.
+    
+    AcceptHead outputs logits (unbounded), which need to be converted to
+    probabilities (0-1) using sigmoid for accuracy computation.
+    
+    Args:
+        logits: Usually a 2D tensor [batch_size, seq_len] from AcceptHead.
+                In some cases (e.g., MoE models), it might be a tuple/list where
+                the first element is the main logits.
+        labels: Labels tensor (not used here, but required by the interface)
+    
+    Returns:
+        Probabilities tensor [batch_size, seq_len] with values in [0, 1]
+    """
+    
+    # AcceptHead outputs [batch_size, seq_len] logits (2D tensor)
+    # Convert to probabilities using sigmoid
+    return torch.sigmoid(logits)
+
+
 @dataclass
 class ComputeAccuracy:
     r"""Compute accuracy and support `batch_eval_metrics`."""
@@ -79,6 +100,68 @@ class ComputeAccuracy:
             pred, label = preds[i, :-1], labels[i, 1:]
             label_mask = label != IGNORE_INDEX
             self.score_dict["accuracy"].append(np.mean(pred[label_mask] == label[label_mask]))
+
+        if compute_result:
+            return self._dump()
+
+
+@dataclass
+class ComputeAcceptHeadAccuracy:
+    r"""Compute accuracy for AcceptHead regression task with tolerance support.
+    
+    For regression tasks, predictions are considered correct if they are within
+    a tolerance threshold (e.g., 10%) of the true label.
+    """
+
+    tolerance: float = 0.1  # Default 10% tolerance
+
+    def _dump(self) -> Optional[dict[str, float]]:
+        result = None
+        if hasattr(self, "score_dict"):
+            result = {k: float(np.mean(v)) for k, v in self.score_dict.items()}
+
+        self.score_dict = {"accuracy": [], "mae": [], "mse": [], "rmse": []}
+        return result
+
+    def __post_init__(self):
+        self._dump()
+
+    def __call__(self, eval_preds: "EvalPrediction", compute_result: bool = True) -> Optional[dict[str, float]]:
+        # eval_preds.predictions: logits from AcceptHead (already sigmoided in preprocess_logits_for_metrics)
+        # eval_preds.label_ids: target scores (0-1) or IGNORE_INDEX
+        preds, labels = numpify(eval_preds.predictions), numpify(eval_preds.label_ids)
+        
+        for i in range(len(preds)):
+            pred, label = preds[i], labels[i]
+            # Only compute metrics on mismatch positions (where label != IGNORE_INDEX)
+            label_mask = label != IGNORE_INDEX
+            
+            if label_mask.sum() > 0:
+                pred_valid = pred[label_mask]  # Predicted scores (0-1)
+                label_valid = label[label_mask]  # True scores (0-1)
+                
+                # Compute accuracy with tolerance
+                epsilon = 1e-8
+                relative_error = np.abs(pred_valid - label_valid) / np.maximum(label_valid, epsilon)
+                # For very small labels (< 0.01), use absolute error threshold of tolerance
+                small_label_mask = label_valid < 0.01
+                absolute_error = np.abs(pred_valid - label_valid)
+                correct = np.where(
+                    small_label_mask,
+                    absolute_error <= self.tolerance,  # Absolute threshold for small labels
+                    relative_error <= self.tolerance   # Relative threshold for larger labels
+                )
+                
+                self.score_dict["accuracy"].append(np.mean(correct))
+                
+                # Compute additional regression metrics
+                mae = np.mean(absolute_error)  # Mean Absolute Error
+                mse = np.mean((pred_valid - label_valid) ** 2)  # Mean Squared Error
+                rmse = np.sqrt(mse)  # Root Mean Squared Error
+                
+                self.score_dict["mae"].append(mae)
+                self.score_dict["mse"].append(mse)
+                self.score_dict["rmse"].append(rmse)
 
         if compute_result:
             return self._dump()
