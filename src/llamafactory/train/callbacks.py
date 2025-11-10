@@ -14,11 +14,13 @@
 
 import json
 import os
+import shutil
 import signal
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 import torch
@@ -380,3 +382,39 @@ class ReporterCallback(TrainerCallback):
                     "generating_args": self.generating_args.to_dict(),
                 }
             )
+
+
+class SaveConfigCallback(TrainerCallback):
+    r"""A callback for saving the training configuration file to checkpoint directories."""
+
+    def __init__(self) -> None:
+        self.config_path: Optional[str] = os.getenv("LLAMAFACTORY_CONFIG_PATH")
+
+    @override
+    def on_save(self, args: "TrainingArguments", state: "TrainerState", control: "TrainerControl", **kwargs):
+        r"""Save config file to checkpoint directory when checkpoint is saved."""
+        if args.should_save and self.config_path and os.path.exists(self.config_path):
+            output_dir = os.path.join(args.output_dir, f"{PREFIX_CHECKPOINT_DIR}-{state.global_step}")
+            # Ensure directory exists (should already exist, but check for safety)
+            os.makedirs(output_dir, exist_ok=True)
+            try:
+                config_filename = Path(self.config_path).name
+                dest_path = os.path.join(output_dir, config_filename)
+                shutil.copy2(self.config_path, dest_path)
+                logger.info_rank0(f"Configuration file saved to {dest_path}")
+            except Exception as e:
+                logger.warning_rank0(f"Failed to save configuration file to checkpoint: {e}")
+
+    @override
+    def on_train_end(self, args: "TrainingArguments", state: "TrainerState", control: "TrainerControl", **kwargs):
+        r"""Save config file to final output directory when training ends."""
+        if args.should_save and self.config_path and os.path.exists(self.config_path):
+            # Ensure directory exists
+            os.makedirs(args.output_dir, exist_ok=True)
+            try:
+                config_filename = Path(self.config_path).name
+                dest_path = os.path.join(args.output_dir, config_filename)
+                shutil.copy2(self.config_path, dest_path)
+                logger.info_rank0(f"Configuration file saved to {dest_path}")
+            except Exception as e:
+                logger.warning_rank0(f"Failed to save configuration file to output directory: {e}")

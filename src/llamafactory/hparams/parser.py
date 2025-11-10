@@ -71,12 +71,18 @@ def read_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -> Union[
         return args
 
     if sys.argv[1].endswith(".yaml") or sys.argv[1].endswith(".yml"):
+        config_path = Path(sys.argv[1]).absolute()
+        # Store config file path in environment variable for later use
+        os.environ["LLAMAFACTORY_CONFIG_PATH"] = str(config_path)
         override_config = OmegaConf.from_cli(sys.argv[2:])
-        dict_config = OmegaConf.load(Path(sys.argv[1]).absolute())
+        dict_config = OmegaConf.load(config_path)
         return OmegaConf.to_container(OmegaConf.merge(dict_config, override_config))
     elif sys.argv[1].endswith(".json"):
+        config_path = Path(sys.argv[1]).absolute()
+        # Store config file path in environment variable for later use
+        os.environ["LLAMAFACTORY_CONFIG_PATH"] = str(config_path)
         override_config = OmegaConf.from_cli(sys.argv[2:])
-        dict_config = OmegaConf.load(Path(sys.argv[1]).absolute())
+        dict_config = OmegaConf.load(config_path)
         return OmegaConf.to_container(OmegaConf.merge(dict_config, override_config))
     else:
         return sys.argv[1:]

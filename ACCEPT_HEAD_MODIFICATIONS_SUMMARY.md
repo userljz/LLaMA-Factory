@@ -856,7 +856,207 @@ labels = [IGNORE_INDEX, IGNORE_INDEX, ..., IGNORE_INDEX, IGNORE_INDEX, 0.4, IGNO
 
 ---
 
-**文档版本**：v1.0
-**最后更新**：2025-11
+## 十三、配置文件自动保存功能
+
+### 功能概述
+
+实现了自动将训练时使用的 YAML/JSON 配置文件保存到 checkpoint 目录的功能，方便追溯训练配置和恢复训练。
+
+### 修改文件（3个）
+
+#### 1. `src/llamafactory/hparams/parser.py`
+
+**修改位置**：第68-88行
+
+**修改内容**：在 `read_args()` 函数中记录配置文件路径
+
+**修改前**：
+```python
+def read_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -> Union[dict[str, Any], list[str]]:
+    r"""Get arguments from the command line or a config file."""
+    if args is not None:
+        return args
+
+    if sys.argv[1].endswith(".yaml") or sys.argv[1].endswith(".yml"):
+        override_config = OmegaConf.from_cli(sys.argv[2:])
+        dict_config = OmegaConf.load(Path(sys.argv[1]).absolute())
+        return OmegaConf.to_container(OmegaConf.merge(dict_config, override_config))
+    # ...
+```
+
+**修改后**：
+```python
+def read_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -> Union[dict[str, Any], list[str]]:
+    r"""Get arguments from the command line or a config file."""
+    if args is not None:
+        return args
+
+    if sys.argv[1].endswith(".yaml") or sys.argv[1].endswith(".yml"):
+        config_path = Path(sys.argv[1]).absolute()
+        # Store config file path in environment variable for later use
+        os.environ["LLAMAFACTORY_CONFIG_PATH"] = str(config_path)
+        override_config = OmegaConf.from_cli(sys.argv[2:])
+        dict_config = OmegaConf.load(config_path)
+        return OmegaConf.to_container(OmegaConf.merge(dict_config, override_config))
+    elif sys.argv[1].endswith(".json"):
+        config_path = Path(sys.argv[1]).absolute()
+        # Store config file path in environment variable for later use
+        os.environ["LLAMAFACTORY_CONFIG_PATH"] = str(config_path)
+        override_config = OmegaConf.from_cli(sys.argv[2:])
+        dict_config = OmegaConf.load(config_path)
+        return OmegaConf.to_container(OmegaConf.merge(dict_config, override_config))
+    # ...
+```
+
+**目的**：
+- 读取 YAML/JSON 配置文件时，将配置文件路径保存到环境变量 `LLAMAFACTORY_CONFIG_PATH`
+- 支持后续 callback 读取并复制配置文件到 checkpoint 目录
+
+---
+
+#### 2. `src/llamafactory/train/callbacks.py`
+
+**修改1：导入模块**（第15-23行）
+```python
+import json
+import os
+import shutil  # 新增
+import signal
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
+from pathlib import Path  # 新增
+from typing import TYPE_CHECKING, Any, Optional
+```
+
+**修改2：添加 SaveConfigCallback 类**（第387-420行）
+
+**完整代码**：
+```python
+class SaveConfigCallback(TrainerCallback):
+    r"""A callback for saving the training configuration file to checkpoint directories."""
+
+    def __init__(self) -> None:
+        self.config_path: Optional[str] = os.getenv("LLAMAFACTORY_CONFIG_PATH")
+
+    @override
+    def on_save(self, args: "TrainingArguments", state: "TrainerState", control: "TrainerControl", **kwargs):
+        r"""Save config file to checkpoint directory when checkpoint is saved."""
+        if args.should_save and self.config_path and os.path.exists(self.config_path):
+            output_dir = os.path.join(args.output_dir, f"{PREFIX_CHECKPOINT_DIR}-{state.global_step}")
+            # Ensure directory exists (should already exist, but check for safety)
+            os.makedirs(output_dir, exist_ok=True)
+            try:
+                config_filename = Path(self.config_path).name
+                dest_path = os.path.join(output_dir, config_filename)
+                shutil.copy2(self.config_path, dest_path)
+                logger.info_rank0(f"Configuration file saved to {dest_path}")
+            except Exception as e:
+                logger.warning_rank0(f"Failed to save configuration file to checkpoint: {e}")
+
+    @override
+    def on_train_end(self, args: "TrainingArguments", state: "TrainerState", control: "TrainerControl", **kwargs):
+        r"""Save config file to final output directory when training ends."""
+        if args.should_save and self.config_path and os.path.exists(self.config_path):
+            # Ensure directory exists
+            os.makedirs(args.output_dir, exist_ok=True)
+            try:
+                config_filename = Path(self.config_path).name
+                dest_path = os.path.join(args.output_dir, config_filename)
+                shutil.copy2(self.config_path, dest_path)
+                logger.info_rank0(f"Configuration file saved to {dest_path}")
+            except Exception as e:
+                logger.warning_rank0(f"Failed to save configuration file to output directory: {e}")
+```
+
+**功能说明**：
+- `on_save()`: 每次保存 checkpoint 时，自动将配置文件复制到对应的 checkpoint 目录（如 `checkpoint-500/`）
+- `on_train_end()`: 训练结束时，将配置文件复制到最终输出目录
+- 使用 `shutil.copy2()` 保留文件的元数据（时间戳等）
+- 包含错误处理，失败时只记录警告，不影响训练流程
+
+---
+
+#### 3. `src/llamafactory/train/tuner.py`
+
+**修改1：导入 SaveConfigCallback**（第30行）
+```python
+from .callbacks import LogCallback, PissaConvertCallback, ReporterCallback, SaveConfigCallback
+```
+
+**修改2：注册 callback**（第67行）
+```python
+callbacks.append(SaveConfigCallback())  # Save config file to checkpoints
+callbacks.append(ReporterCallback(model_args, data_args, finetuning_args, generating_args))  # add to last
+```
+
+**目的**：在训练流程中自动注册 `SaveConfigCallback`，无需额外配置
+
+---
+
+### 使用方式
+
+**无需额外配置**，使用 YAML/JSON 文件启动训练时自动生效：
+
+```bash
+llamafactory-cli train examples/train_lora/llama3_1_8b_lora_sft_accept_head.yaml
+```
+
+### 保存位置
+
+配置文件会自动保存到以下位置：
+
+1. **每个 checkpoint 目录**：
+   ```
+   saves/llama3.1-8b/lora/sft-accept-head/checkpoint-500/llama3_1_8b_lora_sft_accept_head.yaml
+   saves/llama3.1-8b/lora/sft-accept-head/checkpoint-1000/llama3_1_8b_lora_sft_accept_head.yaml
+   ...
+   ```
+
+2. **最终输出目录**：
+   ```
+   saves/llama3.1-8b/lora/sft-accept-head/llama3_1_8b_lora_sft_accept_head.yaml
+   ```
+
+### 功能优势
+
+1. **自动保存**：无需手动配置，使用 YAML/JSON 文件启动时自动保存
+2. **便于追溯**：每个 checkpoint 都包含完整的训练配置，方便查看训练参数
+3. **便于恢复**：恢复训练时可以直接使用 checkpoint 目录中的配置文件
+4. **向后兼容**：不使用配置文件启动时不影响原有功能
+
+### 日志输出
+
+训练时会看到以下日志：
+
+```
+Configuration file saved to saves/llama3.1-8b/lora/sft-accept-head/checkpoint-500/llama3_1_8b_lora_sft_accept_head.yaml
+Configuration file saved to saves/llama3.1-8b/lora/sft-accept-head/llama3_1_8b_lora_sft_accept_head.yaml
+```
+
+### 修改总结表（更新）
+
+| 序号 | 文件路径 | 修改类型 | 行数 | 修改目的 |
+|------|---------|---------|------|---------|
+| 1 | `src/llamafactory/model/model_utils/accept_head.py` | 新建 | 68 | 定义 AcceptHead 模块 |
+| 2 | `src/llamafactory/hparams/model_args.py` | 添加参数 | 4 | 添加 `replace_lm_head` 参数 |
+| 3 | `src/llamafactory/model/patcher.py` | 添加函数 | ~60 | 添加替换逻辑 |
+| 4 | `src/llamafactory/hparams/data_args.py` | 添加参数 | 10 | 添加 `use_accept_head_format` 参数 |
+| 5 | `src/llamafactory/data/parser.py` | 修改一行 | 1 | 添加 "accept_head" 格式化类型 |
+| 6 | `src/llamafactory/data/converter.py` | 添加类和函数 | ~165 | 数据转换和 context 合并 |
+| 7 | `src/llamafactory/data/processor/accept_head.py` | 完全重写 | 245 | AcceptHead 数据预处理 |
+| 8 | `src/llamafactory/train/accept_head_loss.py` | 新建 | 94 | 自定义损失函数 |
+| 9 | `src/llamafactory/train/sft/trainer.py` | 添加逻辑 | ~10 | 使用自定义损失函数 |
+| 10 | `src/llamafactory/hparams/parser.py` | 修改函数 | ~10 | 记录配置文件路径 |
+| 11 | `src/llamafactory/train/callbacks.py` | 添加类 | ~35 | 保存配置文件到 checkpoint |
+| 12 | `src/llamafactory/train/tuner.py` | 注册 callback | 2 | 注册 SaveConfigCallback |
+
+**总计**：12个文件，~650行代码
+
+---
+
+**文档版本**：v1.1
+**最后更新**：2025-01
 **维护者**：LLaMA-Factory Team
 
