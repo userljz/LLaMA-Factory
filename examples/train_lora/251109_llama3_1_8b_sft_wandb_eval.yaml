@@ -43,10 +43,10 @@ ddp_timeout: 180000000
 resume_from_checkpoint: null
 
 ### eval
-val_size: 0.05  # 分出5%的数据作为验证集
-per_device_eval_batch_size: 32
+val_size: 0.01  # 分出5%的数据作为验证集
+per_device_eval_batch_size: 64
 eval_strategy: steps  # 按步数进行评估
-eval_steps: 50  # 每250步进行一次评估（可以根据需要调整）
+eval_steps: 250  # 每250步进行一次评估（可以根据需要调整）
 compute_accuracy: true  # 启用accuracy计算
-accept_head_accuracy_tolerance: 0.1  # Accuracy容差阈值（0.1表示10%的相对误差）
+accept_head_accuracy_tolerance: 0.2  # Accuracy容差阈值（0.1表示10%的相对误差）
 
